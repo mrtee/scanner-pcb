@@ -16,11 +16,16 @@ pclath_saved RES 1 ; variable used for context saving
 var1         RES 1 ; példa változó
 
 
-; RA2	IN+PU	bump opto sensor
-; RA4	IN+PU	button
-; RB4	OUT+OC	lamp
+; RA2	IN+PU	^bump opto sensor
+; RA4	IN+PU	^button
 ; RC0	OUT	bump opto LED
 ; RC1	OUT	LED
+; RC2	OUT	lamp
+
+; RC4	OUT	MOTOR orange
+; RC5	OUT	MOTOR yellow
+; RC6	OUT	MOTOR brown
+; RC7	OUT	MOTOR black
 
 
 
@@ -57,6 +62,30 @@ interrupt
 
 start
     ; << Fő kód helye >>
+    movlw	b'00000010'		; motor off, opto off, LED on
+    movwf	PORTC
+    bsf		STATUS,RP1
+    clrf	ANSEL			; all inputs are digital
+    clrf	ANSELH
+    bcf		WPUB,4			; disable pull-up on RB4 open drain pin 
+    bcf		STATUS,RP1
+    bsf		STATUS,RP0
+    movlw	b'00001000'		; define 6 outputs on PORTC
+    movwf	TRISC
+    bcf		OPTION_REG,NOT_RABPU	; global enable pull-ups
+    bcf		STATUS,RP0
+waitForButton
+    btfsc	PORTA,4
+    goto	waitForButton
+    bsf		PORTC,2
+    
+    
+    
+    
+    
+    
+    
+    
     goto    $              ; örökké körbe
 
 END
