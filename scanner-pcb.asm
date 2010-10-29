@@ -13,6 +13,15 @@ w_saved      RES 1 ; variable used for context saving
 status_saved RES 1 ; variable used for context saving
 pclath_saved RES 1 ; variable used for context saving
 
+time1		RES 1
+time2		RES 1
+time3		RES 1
+porttmp		RES 1
+motorstate	RES 1
+stepbit		RES 1
+stepxor		RES 1
+
+
 var1         RES 1 ; példa változó
 
 
@@ -74,18 +83,83 @@ start
     movwf	TRISC
     bcf		OPTION_REG,NOT_RABPU	; global enable pull-ups
     bcf		STATUS,RP0
+    clrf	time1
+    clrf	motorstate
 waitForButton
     btfsc	PORTA,4
     goto	waitForButton
-    bsf		PORTC,2
+;    bsf		PORTC,2		; lamp on
+    movlw	0x40
+    movwf	var1
+cyc1
+    call	stepfw
+    decfsz	var1
+    goto	cyc1
+
+
+    movlw	0x40
+    movwf	var1
+cyc2
+    call	stepbw
+    decfsz	var1
+    goto	cyc2
+
+
+cyc3
+    call	stepfw
+    call	delay1
+    call	stepfw
+    call	delay1
+    goto	cyc3
     
-    
-    
-    
-    
-    
-    
+
+
     
     goto    $              ; örökké körbe
 
+
+    
+delay1
+    clrw
+delay
+    movwf	time2
+del1
+    decfsz	time1,f
+    goto	del1
+    decfsz	time2,f
+    goto	del1
+    return
+
+stepfw
+    movlw	b'00010000'
+    movwf	stepbit
+    movlw	b'00110000'
+    movwf	stepxor
+    goto	stepp
+stepbw
+    movlw	b'10000000'
+    movwf	stepbit
+    movlw	b'11000000'
+    movwf	stepxor
+
+stepp
+    movf	PORTC,w
+    movwf	porttmp
+    iorwf	stepbit,w
+    btfsc	motorstate,0
+    xorwf	stepxor,w
+    movwf	PORTC
+    call	stepdelay
+    movf	porttmp,w
+    movwf	PORTC
+    call	stepdelay
+    comf	motorstate,f
+    return
+stepdelay
+    movlw	0x10
+    call	delay
+    return
+    
+    
+    
 END
