@@ -20,14 +20,17 @@ porttmp		RES 1
 motorstate	RES 1
 stepbit		RES 1
 stepxor		RES 1
+positionhi	RES 1
+positionlo	RES 1
+
 
 
 var1         RES 1 ; példa változó
 
 
-; RA2	IN+PU	^bump opto sensor
+; RA2	IN+PU	bumper sensor
 ; RA4	IN+PU	^button
-; RC0	OUT	bump opto LED
+; RC0	OUT	bumper opto LED
 ; RC1	OUT	LED
 ; RC2	OUT	lamp
 
@@ -36,7 +39,10 @@ var1         RES 1 ; példa változó
 ; RC6	OUT	MOTOR brown
 ; RC7	OUT	MOTOR black
 
+; forward	= direction to PCB
+; backward	= direction to bumper
 
+; maximal position: 0x0718
 
 
 ; -----------------------------------------------------------------------
@@ -71,40 +77,87 @@ interrupt
 
 start
     ; << Fő kód helye >>
-    movlw	b'00000010'		; motor off, opto off, LED on
+    movlw	b'00000011'		; motor off, lamp off, LED on, bumper opto LED on
     movwf	PORTC
     bsf		STATUS,RP1
     clrf	ANSEL			; all inputs are digital
     clrf	ANSELH
-    bcf		WPUB,4			; disable pull-up on RB4 open drain pin 
     bcf		STATUS,RP1
     bsf		STATUS,RP0
     movlw	b'00001000'		; define 6 outputs on PORTC
     movwf	TRISC
+    bcf		WPUA,2			; RA2 no pull-up
     bcf		OPTION_REG,NOT_RABPU	; global enable pull-ups
     bcf		STATUS,RP0
     clrf	time1
     clrf	motorstate
+
+initial					; move to initial position
+    btfsc	PORTA,2			; bumped?
+    goto	bumped
+    call	stepbw
+    goto	initial
+
+bumped
+
 waitForButton
     btfsc	PORTA,4
     goto	waitForButton
-;    bsf		PORTC,2		; lamp on
-    movlw	0x40
-    movwf	var1
-cyc1
+;    bsf		PORTC,2			; lamp on
+    
+    bsf		PORTC,2		; lamp on
+    
+    clrf	positionhi		; reset position
+    clrf	positionlo
+move1
     call	stepfw
-    decfsz	var1
-    goto	cyc1
+    movlw	d'94'
+    movwf	time3
+delay3
+    call	delay1
+    decfsz	time3,f
+    goto	delay3
+    movlw	0x01
+    xorwf	positionhi,w
+    btfss	STATUS,Z
+    goto	move1
+;    movlw	0x40
+;    xorwf	positionlo,w
+;    btfss	STATUS,Z
+;    goto	move1
+    
+    
+    bcf		PORTC,2			; lamp off
+    
+    goto    $              ; örökké körbe
+    
+    
+;    bcf		PORTC,0			; bumper opto LED off
 
 
-    movlw	0x40
+
+
+
+
+    
+    goto    $              ; örökké körbe
+
+    
+
+
+
+
+
+
+    movlw	0x10
     movwf	var1
 cyc2
-    call	stepbw
-    decfsz	var1
+    call	stepfw
+    decfsz	var1,f
     goto	cyc2
 
-
+    goto    $         
+    
 cyc3
     call	stepfw
     call	delay1
@@ -130,19 +183,25 @@ del1
     goto	del1
     return
 
-stepfw
+stepfw					; one step forward
     movlw	b'00010000'
     movwf	stepbit
     movlw	b'00110000'
     movwf	stepxor
+    incf	positionhi,f		; increment position counter
+    incfsz	positionlo,f
+    decf	positionhi,f
     goto	stepp
-stepbw
+stepbw					; one step backward
     movlw	b'10000000'
     movwf	stepbit
     movlw	b'11000000'
     movwf	stepxor
-
-stepp
+    decf	positionhi,f		; decrement position counter
+    decf	positionlo,f
+    incfsz	positionlo,w
+    incf	positionhi,f
+stepp					; the stepping itself
     movf	PORTC,w
     movwf	porttmp
     iorwf	stepbit,w
@@ -152,11 +211,10 @@ stepp
     call	stepdelay
     movf	porttmp,w
     movwf	PORTC
-    call	stepdelay
-    comf	motorstate,f
+    comf	motorstate,f		; changing the motor state value
     return
 stepdelay
-    movlw	0x10
+    movlw	0x20			; motor pulse
     call	delay
     return
     
