@@ -9,24 +9,25 @@
 ; -----------------------------------------------------------------------
 ; Változó értékadás
 INT_VAR UDATA_SHR
-w_saved      RES 1 ; variable used for context saving
-status_saved RES 1 ; variable used for context saving
-pclath_saved RES 1 ; variable used for context saving
-
 time1		RES 1
 time2		RES 1
 time3		RES 1
+time4		RES 1
+time5		RES 1
+time6		RES 1
+buttonholdinghi	RES 1
+buttonholdinglo RES 1
 porttmp		RES 1
 motorstate	RES 1
 stepbit		RES 1
 stepxor		RES 1
 positionhi	RES 1
 positionlo	RES 1
+graceperiod	RES 1
 
 
-
-var1         RES 1 ; példa változó
-
+EXPLOSURE_COEFFICIENT EQU d'120'
+BUTTON_HOLDING_COUNTER EQU 0x08
 
 ; RA2	IN+PU	bumper sensor
 ; RA4	IN+PU	^button
@@ -44,39 +45,22 @@ var1         RES 1 ; példa változó
 
 ; maximal position: 0x0718
 
+; details of schematics and building from PRIMAX Colorado Direct scanner:
+; original main PCB is totally removed
+; the new PCB and the camera board are grounded together
+; a 78l05 IC is used for providing 5V source for the uC
+; you need also an ULN2003 sink driver IC and a p-mosfet likely IRF9540
+; RA2 is connected to the opto sensor, and a 200K resistor pulls it up to 5V and a 4.7nF capacitor connects it to common GND
+; RA4 is connected to the button, the other wire of the button should be grounded
+; RC0 is connected to opto LED (the one with a resistor in serial on the PCB)
+; RC1 is connected to green LED with an 1K resistor in serial. the other wire of the LED is grounded
+; RC2 is connected to the gate of the mosfet through an ULN2003 driver. the drain is connected to +12V, the source is connected to the camera board +12V wire. a 100K resistor connected to the gate and the source of the mosfet
+; RC4-RC7 are connected to appropriate motor wires through ULN2003 driver blocks. the red wire is connected to +12V
 
 ; -----------------------------------------------------------------------
 ; reset vector
 STARTUP CODE 0x000
-    nop                    ; needed for ICD2 debugging
-    movlw   high start     ; felső bájt betöltés a start cimkénél
-    movwf   PCLATH         ; PCLATH induló érték
-    goto    start          ; menj a start kódra
-
-; megszakítás vektor
-INT_VECTOR CODE 0x004
-    goto    interrupt      ; menj a megszakítás start kódra
-
-; relocatable code
-PROG CODE
-interrupt
-    movwf   w_saved        ; környezet mentés
-    swapf   STATUS,w
-    movwf   status_saved
-    movf    PCLATH,w       ; only required if using more than first page
-    movwf   pclath_saved
-    clrf    PCLATH
-    ; << megszakítási kód helye >>
-    movf    pclath_saved,w ; környezet visszatöltése
-    movwf   PCLATH
-    swapf   status_saved,w
-    movwf   STATUS
-    swapf   w_saved,f
-    swapf   w_saved,w
-    retfie
-
 start
-    ; << Fő kód helye >>
     movlw	b'00000011'		; motor off, lamp off, LED on, bumper opto LED on
     movwf	PORTC
     bsf		STATUS,RP1
@@ -88,89 +72,108 @@ start
     movwf	TRISC
     bcf		WPUA,2			; RA2 no pull-up
     bcf		OPTION_REG,NOT_RABPU	; global enable pull-ups
+    bsf		STATUS,RP1
+    bsf		EECON1,WREN
+    bsf		EECON1,RD
+    nop					; using strict formula
+    nop
     bcf		STATUS,RP0
+    movf	EEDAT,w
+    bcf		STATUS,RP1
+    movwf	motorstate
     clrf	time1
-    clrf	motorstate
+    clrf	graceperiod
 
-initial					; move to initial position
-    btfsc	PORTA,2			; bumped?
-    goto	bumped
-    call	stepbw
-    goto	initial
+querystate
+    call	delay1			; wait for the capacitor to be charged
+    btfss	PORTA,2			; bumped?
+    goto	powerrestore		; no
 
 bumped
-
-waitForButton
-    btfsc	PORTA,4
-    goto	waitForButton
-;    bsf		PORTC,2			; lamp on
-    
-    bsf		PORTC,2		; lamp on
-    
+    bcf		PORTC,0			; opto LED off
     clrf	positionhi		; reset position
     clrf	positionlo
-move1
+
+waitForButton1
+    btfsc	PORTA,4			; button pressed?
+    goto	waitForButton1
+    bsf		PORTC,2			; lamp on
+    
+forward1				; move forward while the button pressed
     call	stepfw
-    movlw	d'94'
-    movwf	time3
-delay3
-    call	delay1
-    decfsz	time3,f
-    goto	delay3
-    movlw	0x01
+    btfsc	PORTA,4			; button released?
+    goto	endofforward1
+    movlw	0x07			; check for end position 0x0718
     xorwf	positionhi,w
     btfss	STATUS,Z
-    goto	move1
-;    movlw	0x40
-;    xorwf	positionlo,w
-;    btfss	STATUS,Z
-;    goto	move1
+    goto	forward1
+    movlw	0x18
+    xorwf	positionlo,w
+    btfss	STATUS,Z
+    goto	forward1		; step again if end position not reached
+
+waitForButton2
+    btfss	PORTA,4			; wait for button to be released
+    goto	waitForButton2		; in case of end position
+
+endofforward1
+    call	delay1			; wait for button to be settled
+    incf	graceperiod,f		; grant the grace period
+					; when user can induce individual steps with the button
+powerrestore
+    movlw	b'00000111'		; lamp, LED and opto LED on
+    movwf	PORTC			; in any case (power restore)
+
+;	doing the slow motion backward
+    clrf	time5
+
+motion
+    movlw	EXPLOSURE_COEFFICIENT	; you can change this coefficient in the header
+    movwf	time6
     
+del2
+    decfsz	time4,f			; just a short delay
+    goto	del2
+    btfss	PORTA,4			; button pressed?
+    goto	manipulation		; yes, the progress is being manipulated
+returnfrommanipulation
+    btfss	PORTA,4			; if button released
+    goto	dontreset
+    movlw	BUTTON_HOLDING_COUNTER
+    movwf	buttonholdinghi		; reset button holding counter
+    clrf	buttonholdinglo
+dontreset
+    decfsz	time5,f			; 256 times more delay
+    goto	del2
+    movlw	b'00000010'
+    xorwf	PORTC,f			; blink LED
+    btfsc	PORTA,2			; bumped?
+    goto	start			; if yes, dont step again, end of procedure
+    decfsz	time6,f			; decrease explosure counter
+    goto	del2			; it's not time for a step yet
+    call	stepbw			; step backward
+    bcf		graceperiod,0		; grace period is over
+    goto	motion			; wait and move again
     
-    bcf		PORTC,2			; lamp off
-    
-    goto    $              ; örökké körbe
-    
-    
-;    bcf		PORTC,0			; bumper opto LED off
-
-
-
-
-
-
-    
-    goto    $              ; örökké körbe
-
-    
-
-
-
-
-
-
-    movlw	0x10
-    movwf	var1
-cyc2
-    call	stepfw
-    decfsz	var1,f
-    goto	cyc2
-
-    goto    $         
-    
-cyc3
-    call	stepfw
-    call	delay1
-    call	stepfw
-    call	delay1
-    goto	cyc3
-    
-
-
-    
-    goto    $              ; örökké körbe
-
-
+manipulation
+    btfsc	buttonholdinglo,7	; only step once when button just pressed
+    goto	ignorestep
+    btfsc	graceperiod,0		; grace period over?
+    call	stepbw			; if no, step backward
+ignorestep    
+    decf	buttonholdinglo,f	; counting down the holding time
+    btfsc	buttonholdinglo,7
+    goto	returnfrommanipulation
+    bsf		buttonholdinglo,7
+    decfsz	buttonholdinghi,f		
+    goto	returnfrommanipulation
+    movlw	b'00000011'
+    movwf	PORTC			; lamp off, LED and opto LED on
+initial
+    call	stepbw			; move back to initial position
+    btfss	PORTA,2			; bumped?
+    goto	initial
+    goto	start			; job cancelled, start from beginning
     
 delay1
     clrw
@@ -201,7 +204,7 @@ stepbw					; one step backward
     decf	positionlo,f
     incfsz	positionlo,w
     incf	positionhi,f
-stepp					; the stepping itself
+stepp					; the stepping action itself
     movf	PORTC,w
     movwf	porttmp
     iorwf	stepbit,w
@@ -212,12 +215,21 @@ stepp					; the stepping itself
     movf	porttmp,w
     movwf	PORTC
     comf	motorstate,f		; changing the motor state value
+    movf	motorstate,w
+    bsf		STATUS,RP1
+    movwf	EEDAT			; storing motor state to flash memory
+    bsf		STATUS,RP0
+    movlw	0x55			; using strict formula
+    movwf	EECON2
+    movlw	0xaa
+    movwf	EECON2
+    bsf		EECON1,WR
+    bcf		STATUS,RP0
+    bcf		STATUS,RP1
     return
 stepdelay
     movlw	0x20			; motor pulse
     call	delay
     return
-    
-    
     
 END
