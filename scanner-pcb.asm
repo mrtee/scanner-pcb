@@ -26,7 +26,7 @@ positionlo	RES 1
 graceperiod	RES 1
 
 
-EXPLOSURE_COEFFICIENT EQU d'120'
+EXPLOSURE_COEFFICIENT EQU d'126'
 BUTTON_HOLDING_COUNTER EQU 0x08
 
 ; RA2	IN+PU	bumper sensor
@@ -148,7 +148,7 @@ dontreset
     movlw	b'00000010'
     xorwf	PORTC,f			; blink LED
     btfsc	PORTA,2			; bumped?
-    goto	start			; if yes, dont step again, end of procedure
+    goto	restart			; if yes, dont step again, end of procedure
     decfsz	time6,f			; decrease explosure counter
     goto	del2			; it's not time for a step yet
     call	stepbw			; step backward
@@ -173,7 +173,7 @@ initial
     call	stepbw			; move back to initial position
     btfss	PORTA,2			; bumped?
     goto	initial
-    goto	start			; job cancelled, start from beginning
+    goto	restart			; job cancelled, start from beginning
     
 delay1
     clrw
@@ -231,5 +231,13 @@ stepdelay
     movlw	0x20			; motor pulse
     call	delay
     return
+    
+restart
+    call	stepbw			; step one more to be sure about bumper
+btn
+    btfss	PORTA,4			; wait for button to be released
+    goto	btn
+    call	delay1
+    goto	start
     
 END
